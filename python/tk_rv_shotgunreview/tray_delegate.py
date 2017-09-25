@@ -145,7 +145,9 @@ class RvTrayDelegate(shotgun_view.WidgetDelegate):
 
         if self.tray_view.selectionModel().isSelected(model_index):
             selected = True
-        
+
+        widget.set_label(sg_item.get("code"))
+
         widget.set_selected(selected, in_mini_cut)
 
     def _on_before_selection(self, widget, model_index, style_options):
@@ -235,12 +237,13 @@ class RvTrayDelegate(shotgun_view.WidgetDelegate):
             if self.tray_view.rv_mode.index_is_pinned(model_index.row()):
                 painter.drawPixmap(paint_widget.width() - self.pin_pixmap.width(), 0, self.pin_pixmap)
  
-            if not sg_item.get('version.Version.id') and not sg_item.get('image') and not sg_item.get('cut.Cut.version.Version.image'):
-                target = QtCore.QRectF(0.0, 0.0, paint_widget.width(), paint_widget.height() )
-                source = QtCore.QRectF(0, 0, self.missing_pixmap.width(), self.missing_pixmap.height())
-                # painter.drawPixmap(target, self.missing_pixmap, source)
-                painter.fillRect( 0, 0, paint_widget.width(), paint_widget.height(), QtGui.QColor(10,0,0,255) )
-                painter.drawText(0,5,100,100, QtCore.Qt.AlignHCenter | QtCore.Qt.AlignCenter, 'MISSING')
+            # Users would rather see Version.code than "MISSING" -- @JoshBurnell
+            # if not sg_item.get('version.Version.id') and not sg_item.get('image') and not sg_item.get('cut.Cut.version.Version.image'):
+            #     target = QtCore.QRectF(0.0, 0.0, paint_widget.width(), paint_widget.height() )
+            #     source = QtCore.QRectF(0, 0, self.missing_pixmap.width(), self.missing_pixmap.height())
+            #     # painter.drawPixmap(target, self.missing_pixmap, source)
+            #     painter.fillRect( 0, 0, paint_widget.width(), paint_widget.height(), QtGui.QColor(10,0,0,255) )
+            #     painter.drawText(0,5,100,100, QtCore.Qt.AlignHCenter | QtCore.Qt.AlignCenter, 'MISSING')
 
 
             mini_data = self.tray_view.rv_mode.cached_mini_cut_data
