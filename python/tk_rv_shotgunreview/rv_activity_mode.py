@@ -103,6 +103,7 @@ class MediaType:
 standard_media_types = dict(
         Movie=MediaType ("Movie",  "sg_path_to_movie",  "sg_movie_has_slate",   "sg_movie_aspect_ratio"),
         Streaming=MediaType ("Streaming",  "sg_path_to_movie",  "sg_movie_has_slate",   "sg_movie_aspect_ratio"),
+        HQ=MediaType ("HQ",  "sg_path_to_hq_movie",  "sg_hq_movie_has_slate",   "sg_hq_movie_aspect_ratio"),
         Frames=MediaType("Frames", "sg_path_to_frames", "sg_frames_have_slate", "sg_frames_aspect_ratio")
     )
 
@@ -149,10 +150,13 @@ required_version_fields = [
     "sg_last_frame",
     "sg_frames_aspect_ratio",
     "sg_frames_have_slate",
+    "sg_path_to_frames",
     "sg_movie_aspect_ratio",
     "sg_movie_has_slate",
-    "sg_path_to_frames",
     "sg_path_to_movie",
+    "sg_hq_movie_aspect_ratio",
+    "sg_hq_movie_has_slate",
+    "sg_path_to_hq_movie",
     "sg_status_list",
     "sg_uploaded_movie_frame_rate"
     ]
@@ -512,6 +516,10 @@ class RvActivityMode(rvt.MinorMode):
         self._prefs.preferred_media_type = "Frames"
         self._prefs.save()
 
+    def set_default_media_type_hq(self, event):
+        self._prefs.preferred_media_type = "HQ"
+        self._prefs.save()
+
     def default_media_type_state_movie(self):
         return rvc.CheckedMenuState if self._prefs.preferred_media_type == "Movie" else rvc.UncheckedMenuState
 
@@ -520,6 +528,9 @@ class RvActivityMode(rvt.MinorMode):
 
     def default_media_type_state_streaming(self):
         return rvc.CheckedMenuState if self._prefs.preferred_media_type == "Streaming" else rvc.UncheckedMenuState
+
+    def default_media_type_state_hq(self):
+        return rvc.CheckedMenuState if self._prefs.preferred_media_type == "HQ" else rvc.UncheckedMenuState
 
     def toggle_startup_view_details(self, event):
         self._prefs.startup_view_details = not self._prefs.startup_view_details
@@ -829,12 +840,12 @@ class RvActivityMode(rvt.MinorMode):
         if first_frame is not None:
             # If this is not a Movie assume the default frame mapping works (as
             # it should for Frames)
-            if   media_type == "Frames" and rvc.propertyExists(range_start_prop):
+            if   media_type not in ("Movie", "HQ", "Streaming") and rvc.propertyExists(range_start_prop):
                 rvc.deleteProperty(range_start_prop)
 
             # If it _is_ a movie, compensate for lack of timecode or wrong
             # timecode.
-            elif media_type != "Frames" and has_slate is not None:
+            elif media_type in ("Movie", "HQ", "Streaming") and has_slate is not None:
                 setProp(range_start_prop, first_frame - int(has_slate))
 
 
@@ -1019,12 +1030,14 @@ class RvActivityMode(rvt.MinorMode):
                     ("_", None),
                     
                     ("Swap Media - Current Clip", None, None, lambda: rvc.DisabledMenuState),
-                    ("    Movie",  self.swap_media_factory("Movie", "one"),  None, self.current_is("Movie")),
-                    ("    Frames", self.swap_media_factory("Frames", "one"), None, self.current_is("Frames")),
+                    ("    Movie",  self.swap_media_factory("Movie", "one"),  None, lambda: rvc.UncheckedMenuState),
+                    ("    HQ",  self.swap_media_factory("HQ", "one"),  None, lambda: rvc.UncheckedMenuState),
+                    ("    Frames", self.swap_media_factory("Frames", "one"), None, lambda: rvc.UncheckedMenuState),
                     ("    Streaming", self.swap_media_factory("Streaming", "one"), None, self.allow_streaming("one")),
 
                     ("Swap Media - All Clips", None, None, lambda: rvc.DisabledMenuState),
                     ("    Movie",  self.swap_media_factory("Movie", "all"),  None, lambda: rvc.UncheckedMenuState),
+                    ("    HQ",  self.swap_media_factory("HQ", "all"),  None, lambda: rvc.UncheckedMenuState),
                     ("    Frames", self.swap_media_factory("Frames", "all"), None, lambda: rvc.UncheckedMenuState),
                     ("    Streaming", self.swap_media_factory("Streaming", "all"), None, self.allow_streaming("all")),
 
@@ -1040,6 +1053,7 @@ class RvActivityMode(rvt.MinorMode):
                     ("Preferences", [
                         ("Default Media Type", None, None, lambda: rvc.DisabledMenuState),
                         ("    Movie",  self.set_default_media_type_movie,  None, self.default_media_type_state_movie),
+                        ("    HQ",  self.set_default_media_type_hq,  None, self.default_media_type_state_hq),
                         ("    Frames", self.set_default_media_type_frames, None, self.default_media_type_state_frames),
                         ("    Streaming", self.set_default_media_type_streaming, None, self.default_media_type_state_streaming),
 
@@ -1220,6 +1234,9 @@ class RvActivityMode(rvt.MinorMode):
                 "sg_movie_has_slate",
                 "sg_path_to_frames",
                 "sg_path_to_movie",
+                "sg_hq_movie_aspect_ratio",
+                "sg_hq_movie_has_slate",
+                "sg_path_to_hq_movie",
                 "sg_status_list",
                 "sg_uploaded_movie_frame_rate",
             ],
@@ -2810,9 +2827,6 @@ class RvActivityMode(rvt.MinorMode):
 
                 elif 'cut_item_out' in sg_item:
                     return
-
-                else:
-                    print "WARNING: Unable to play item %s" % sg_item['id']
 
     def get_mini_values(self):
         self._prefs.mini_left_count  = self.tray_left_spinner.value() 
