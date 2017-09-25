@@ -994,6 +994,7 @@ class RvActivityMode(rvt.MinorMode):
                 ("compare_with_current", self.compare_with_current, ""),
                 ("compare_selected", self.compare_selected, ""),
                 ("swap_into_sequence", self.swapIntoSequence, ""),
+                ("play_in_sequence", self.create_sequence_from_versions, ""),
                 ("replace_with_selected", self.replaceWithSelected, ""),
                 ("graph-state-change", self.graphStateChange, ""),
                 ('id_from_gma', self.on_id_from_gma, ""),
@@ -1334,7 +1335,16 @@ class RvActivityMode(rvt.MinorMode):
         # setting to NoContextMenu DOESNT WORK!!!
         # so add a no-op
         self.tray_dock.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
-        self.tray_dock.customContextMenuRequested.connect( self.dont_show_tray_context_menu)
+        self.tray_dock.customContextMenuRequested.connect(self.dont_show_tray_context_menu)
+
+        # Add TrayModel context menu actions
+        self.tray_main_frame.add_version_context_menu_action(
+            action_definition=dict(
+                callback=self._play_in_sequence,
+                required_selection="multi",
+                text="Play In Sequence",
+            )
+        )
 
     def mini_cut_mode_toggle(self, event):
         # load current mini-cut state for this sequence node
@@ -2766,36 +2776,43 @@ class RvActivityMode(rvt.MinorMode):
         return data
            
     def tray_double_clicked(self, index):
-        # XXX go over
-        return
-        sg_item = shotgun_model.get_sg_data(index)
-        single_source = []
-        single_frames = []
-        single_ins = []
-        single_outs = []
-        t = 1
-        single_source.append(index.row())
-        single_ins.append(sg_item['cut_item_in'])
-        single_outs.append(sg_item['cut_item_out'])
-        single_frames.append(t)
-        t = sg_item['cut_item_out'] - sg_item['cut_item_in'] + 1 + t
-        single_frames.append(t)
-        single_source.append(0)
-        single_ins.append(0)
-        single_outs.append(0)
-        setProp('%s.edl.frame' % self.cut_seq_name, single_frames)
-        setProp('%s.edl.in' % self.cut_seq_name, single_ins)
-        setProp('%s.edl.out' % self.cut_seq_name, single_outs)
-        
-        setProp("%s.mode.autoEDL" % self.cut_seq_name, 0)
-        setProp("%s.mode.useCutInfo" % self.cut_seq_name, 0)
+        """
+        This should trigger RV to isolate the clip and loop it. I think that's
+        what they're trying to do here, but I think it only works for CutItems
+        and we're mostly doing it for Versions. I think we just need to change
+        cut_item_in/cut_item_out to sg_first_frame/sg_last_frame. -- @JoshBurnell
+        """
+        self.double_clicked = True
+        modifiers = QtGui.QApplication.keyboardModifiers()
+        if modifiers in [QtCore.Qt.ControlModifier,
+                             QtCore.Qt.ShiftModifier,
+                             QtCore.Qt.ControlModifier | QtCore.Qt.ShiftModifier]:
+            return
 
-        sources = rvc.nodesOfType("RVSourceGroup")
-        single = [ sources[index.row()] ]
-        rvc.setNodeInputs(self.cut_seq, single)
-        rvc.setViewNode(self.cut_seq)
-        rvc.setFrame(1)
-        rvc.play()
+        if rvc.nodeType(rvc.viewNode()) == "RVSequenceGroup":
+            seq_node = groupMemberOfType(rvc.viewNode(), "RVSequence")
+            if seq_node:
+                frame_index = index.row()
+                sg_item = shotgun_model.get_sg_data(index)
+                if 'sg_first_frame' in sg_item:
+                    # Get the frame info from the sg_item
+                    # It's possible we should get this from the Sequence
+                    #     itself. --@JoshBurnell
+                    frame = rvc.getIntProperty(seq_node + ".edl.frame")
+                    start_frame = frame[frame_index]
+                    end_frame = (frame[frame_index]
+                                    + sg_item['sg_last_frame'] - 1)
+
+                    rvc.setInPoint(start_frame)
+                    rvc.setOutPoint(end_frame)
+                    rvc.setFrame(start_frame)
+                    rvc.play()
+
+                elif 'cut_item_out' in sg_item:
+                    return
+
+                else:
+                    print "WARNING: Unable to play item %s" % sg_item['id']
 
     def get_mini_values(self):
         self._prefs.mini_left_count  = self.tray_left_spinner.value() 
@@ -2910,31 +2927,78 @@ class RvActivityMode(rvt.MinorMode):
         self.tray_button_entire_cut.setStyleSheet('QPushButton { color: rgb(125,126,127); }')
 
         self.tray_list.repaint()
-
+    
     def tray_clicked(self, index):
+        """
+        When an item (i.e. "CutItem" or "Version") is clicked in the tray.
 
-        if rvc.nodeType(rvc.viewNode()) == "RVSequenceGroup":
-            seq_node = groupMemberOfType(rvc.viewNode(), "RVSequence")
-            if seq_node:
-                mini_data = MiniCutData.load_from_session()
-                row = index.row()
-                frame_index = row
-                if mini_data.active:
-                    if     (frame_index < mini_data.first_clip or
-                            frame_index > mini_data.last_clip):
-                        frame_index = min(max(mini_data.first_clip,frame_index), mini_data.last_clip)
-                        index = self.tray_model.index(frame_index, 0)
-                    frame_index = frame_index - mini_data.first_clip 
-                frame = rvc.getIntProperty(seq_node + ".edl.frame")
-                rvc.setFrame(frame[frame_index])
-                sm = self.tray_list.selectionModel()           
-                sm.select(index, sm.ClearAndSelect)
-                # self.tray_list.scrollTo(index, QtGui.QAbstractItemView.PositionAtCenter)
+        :param index: `PySide.QtCore.QModelIndex`
+        :return:
+        """
+        # Preventing this from proceeding if we just fired tray_double_clicked
+        if hasattr(self, 'double_clicked') and self.double_clicked:
+            self.double_clicked = False
+            return
 
-                # XXX below should work according to docs
-                # self.tray_list.scrollTo(index, QtGui.QAbstractItemView.EnsureVisible)
+        modifiers = QtGui.QApplication.keyboardModifiers()
+        if modifiers not in [QtCore.Qt.ControlModifier,
+                             QtCore.Qt.ShiftModifier,
+                             QtCore.Qt.ControlModifier | QtCore.Qt.ShiftModifier]:
+            if rvc.nodeType(rvc.viewNode()) == "RVSequenceGroup":
+                seq_node = groupMemberOfType(rvc.viewNode(), "RVSequence")
+                if seq_node:
+                    frame_index = index.row()
 
-        self.tray_list.repaint()
+                    mini_data = MiniCutData.load_from_session()
+                    if mini_data.active:
+                        if (frame_index < mini_data.first_clip or
+                                frame_index > mini_data.last_clip):
+                            # frame_index = min(max(mini_data.first_clip,
+                            #                       frame_index),
+                            #                   mini_data.last_clip)
+                            # index = self.tray_model.index(frame_index, 0)
+
+                            # When you click outside the mini-cut, move the
+                            # mini-cut. --JOSH
+                            self.load_mini_cut(frame_index, move_minicut=True)
+                            return
+                        frame_index = frame_index - mini_data.first_clip
+
+                    frame = rvc.getIntProperty(seq_node + ".edl.frame")
+                    rvc.setInPoint(rvc.frameStart())
+                    rvc.setOutPoint(rvc.frameEnd())
+                    rvc.setFrame(frame[frame_index])
+
+                    sm = self.tray_list.selectionModel()
+                    sm.select(index, sm.ClearAndSelect)
+
+                    # self.tray_list.scrollTo(index, QtGui.QAbstractItemView.PositionAtCenter)
+
+                    # XXX below should work according to docs
+                    # self.tray_list.scrollTo(index, QtGui.QAbstractItemView.EnsureVisible)
+
+            self.tray_list.repaint()
+
+    def create_sequence_from_versions(self, event):
+        """
+        Create a new Sequence from a list of Version dicts.
+
+        :param indexes:
+        :return:
+        """
+
+        try:
+            data = json.loads(event.contents())
+            self.load_tray_with_something_new({
+                "type": "Version",
+                "id": data[0]["id"],
+                "ids": [version["id"] for version in data]
+            })
+        except Exception as e:
+            print "ERROR: create_sequence_from_versions %r" % e
+
+
+
 
     ##########################################################################
     # version list actions
@@ -2986,6 +3050,159 @@ class RvActivityMode(rvt.MinorMode):
             json.dumps(versions),
         )
 
+    def _play_in_sequence(self, versions, action=None):
+        """
+        Play the selected versions in Sequence.
+
+        :param versions: A list of Version entities to compare.
+        """
+        rv.commands.sendInternalEvent(
+            "play_in_sequence",
+            json.dumps(versions)
+        )
+
+    def _compare_with_versions(self, versions, action):
+        """
+        Compare the given version with the asset attached to the Asset.
+
+        :param versions: A list containing a single version entity.
+        :param action: A QAction with '_asset' attribute
+        """
+        if hasattr(action, "_version"):
+            versions.append(action._version)
+        elif hasattr(action, "_versions"):
+            versions.extend(action._versions)
+        else:
+            raise Exception("ERROR: No _version for Action '%s'" % action.text())
+
+        rv.commands.sendInternalEvent(
+            "compare_ids_from_gma",
+            json.dumps({
+                "ids": [v["id"] for v in versions if v is not None]
+            })
+        )
+
+    ##########################################################################
+    # helper methods
+    def _get_asset_versions_dict(self, version, latest=False):
+        """
+        Get a dict of Asset Versions:
+            Asset Type -> Asset Name -> Latest Version
+
+        :param version: `dict` describing a Version entity
+        :return: `dict`, Describing a collection of Assets and Versions
+        """
+        # Set the filters
+        if version["entity"]["type"] == "Shot":
+            filters = [["entity.Asset.shots", "is", version["entity"]]]
+        elif version["entity"]["type"] == "Asset":
+            filters = [["entity.Asset.assets", "is", version["entity"]]]
+        else:
+            return {}
+
+        # Call Shotgun
+        versions = self._bundle.shotgun.find(
+            "Version",
+            filters,
+            ["entity", "entity.Asset.sg_asset_type", "entity.Asset.code", "code"],
+            [{'field_name': 'id', 'direction': 'desc'}]
+        )
+
+        step_list = []
+        task_list = []
+        versions_dict = {}
+        for vsn in versions:
+            step = vsn["entity.Asset.sg_asset_type"]
+            task = vsn["entity.Asset.code"]
+            if step not in step_list:
+                step_list.append(step)
+                versions_dict[step] = {}
+
+            if task not in task_list:
+                task_list.append(task)
+                versions_dict[step][task] = [vsn]
+            elif not latest:
+                versions_dict[step][task].append(vsn)
+
+        # Translate dict into an ordered list of tuples
+        versions_task_list = []
+        for step in step_list:
+            versions_step_list = []
+            for task in task_list:
+                if task in versions_dict[step]:
+                    versions_step_list.append((task, versions_dict[step][task]))
+            if versions_step_list:
+                versions_task_list.append((step, versions_step_list))
+        return versions_task_list
 
 
+    def __get_versions_task_dict(self, version, subfilters=None, latest=False):
+        """
+        Get a dict of the latest Versions, sorted by Version.sg_department
 
+        This is very messy and should be cleaned up.    -- @jburnell
+
+        :param versions:
+        :return:
+        """
+        filters = [["entity", "is", version["entity"]],
+                   ["sg_task", "is_not", None]]
+        if subfilters:
+            filters.extend(subfilters)
+        if version["id"]:
+            versions = self._bundle.shotgun.find(
+                "Version",
+                filters,
+                ["sg_task.Task.step.Step.code", "sg_task.Task.content", "code"],
+                [{'field_name': 'created_at', 'direction': 'desc'}]
+            )
+
+            step_list = []
+            task_list = []
+            versions_dict = {}
+            for vsn in versions:
+                step = vsn["sg_task.Task.step.Step.code"]
+                task = vsn["sg_task.Task.content"]
+                if step not in step_list:
+                    step_list.append(step)
+                    versions_dict[step] = {}
+
+                if task not in task_list:
+                    task_list.append(task)
+                    versions_dict[step][task] = [vsn]
+                elif not latest:
+                    versions_dict[step][task].append(vsn)
+
+            # Translate dict into an ordered list of tuples
+            versions_task_list = []
+            for step in step_list:
+                versions_step_list = []
+                for task in task_list:
+                    if task in versions_dict[step]:
+                        versions_step_list.append((task, versions_dict[step][task]))
+                if versions_step_list:
+                    versions_task_list.append((step, versions_step_list))
+
+            return versions_task_list
+
+        return []
+
+    def _get_approved_versions_dict(self, version):
+        """
+        Get a dict of the latest Versions, sorted by Version.sg_department
+
+        :param versions:
+        :return:
+        """
+        return self.__get_versions_task_dict(version,
+                                             [["sg_status_list", "is", "apr"]],
+                                             latest=True)
+
+    def _get_latest_versions_dict(self, version):
+        """
+        Get a dict of the latest Versions, sorted by Version.sg_department
+
+        :param versions:
+        :return:
+        """
+        return self.__get_versions_task_dict(version, latest=True)
