@@ -48,9 +48,9 @@ class TrayWidget(QtGui.QWidget):
     def set_selected(self, selected, in_mini_cut=False):
         """
         Adjust the style sheet to indicate selection or not,
-        """        
+        """
         if selected:
-            self.ui.thumbnail.setStyleSheet("QLabel { border: 2px solid rgb(40,136,175); }")
+            self.ui.thumbnail.setStyleSheet("QLabel { border: 4px solid rgb(40,136,175); }")
         else:
             self.ui.thumbnail.setStyleSheet("QLabel { border: 0px solid rgb(37,38,41); }")
           
@@ -71,6 +71,14 @@ class TrayWidget(QtGui.QWidget):
         Populate the lines of text in the widget
         """
         pass
+
+    def set_label(self, text):
+        """
+        Populate the label
+        :param text:
+        :return:
+        """
+        self.ui.label.setText(text)
 
     def sizeHint(self):
         #  = QtCore.QSize(self.ui.thumbnail.width() * 2, self.ui.thumbnail.height()*2)
